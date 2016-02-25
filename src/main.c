@@ -62,13 +62,6 @@ static void graceful_shutdown(struct ev_loop *loop, ev_signal *w, int revents) {
 	ev_break(loop, EVBREAK_ALL);
 }
 
-static void reload_config(struct ev_loop *loop, ev_signal *w, int revents) {
-	stats_log("Received SIGHUP, reloading.");
-	if (server != NULL) {
-		stats_server_reload(server);
-	}
-}
-
 static void hot_restart(struct ev_loop *loop, ev_signal *w, int revents) {
 	pid_t pid, old_pid;
 
@@ -281,9 +274,6 @@ int main(int argc, char **argv, char **envp) {
 
 	ev_signal_init(&sigterm_watcher, graceful_shutdown, SIGTERM);
 	ev_signal_start(loop, &sigterm_watcher);
-
-	ev_signal_init(&sighup_watcher, reload_config, SIGHUP);
-	ev_signal_start(loop, &sighup_watcher);
 
 	ev_signal_init(&sigusr2_watcher, hot_restart, SIGUSR2);
 	ev_signal_start(loop, &sigusr2_watcher);
