@@ -18,11 +18,17 @@ list_t statsrelay_list_new();
 // expanded
 void *statsrelay_list_expand(list_t list);
 
+// get a item from the list if exist
+void *statsrelay_list_get(list_t list, size_t index);
+
 // deallocate the list
 void statsrelay_list_destroy(list_t list);
 
 // deallocate the list and its contents
 void statsrelay_list_destroy_full(list_t list);
+
+// return the size of the list
+size_t statsrelay_list_size(list_t list);
 
 
 #endif  // STATSRELAY_LIST_H
