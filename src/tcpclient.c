@@ -161,8 +161,8 @@ static void tcpclient_write_event(struct ev_loop *loop, struct ev_io *watcher, i
 	ssize_t buf_len = buffer_datacount(sendq);
 	if (buf_len > 0) {
 		ssize_t send_len = send(client->sd, sendq->head, buf_len, 0);
-		stats_debug_log("tcpclient: sent %zd of %zd bytes to backend client %s via fd %d",
-				send_len, buf_len, client->name, client->sd);
+		//stats_debug_log("tcpclient: sent %zd of %zd bytes to backend client %s via fd %d",
+		//		send_len, buf_len, client->name, client->sd);
 		if (send_len < 0) {
 			stats_error_log("tcpclient[%s]: Error from send: %s", client->name, strerror(errno));
 			ev_io_stop(client->loop, &client->write_watcher.watcher);

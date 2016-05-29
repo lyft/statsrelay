@@ -6,6 +6,7 @@
 list_t statsrelay_list_new() {
 	list_t list = malloc(sizeof(struct statsrelay_list));
 	if (list == NULL) {
+		perror("malloc() failed");
 		return list;
 	}
 	list->data = NULL;
@@ -50,8 +51,4 @@ void statsrelay_list_destroy_full(list_t list) {
 		free(list->data[i]);
 	}
 	statsrelay_list_destroy(list);
-}
-
-size_t statsrelay_list_size(list_t list) {
-	return list->size;
 }

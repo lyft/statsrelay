@@ -148,6 +148,7 @@ static void* make_backend(const char *host_and_port, void *data, hashring_type_t
 	} else {
 		backend = find_backend(server->backend_list, server->num_backends, full_key);
 	}
+
 	if (backend != NULL) {
 		free(host);
 		free(port);
@@ -202,6 +203,7 @@ make_err:
 	free(port);
 	free(protocol);
 	free(full_key);
+	free(full_key_metrics);
 	return NULL;
 }
 
@@ -799,7 +801,7 @@ int stats_recv(int sd, void *data, void *ctx) {
 		stats_debug_log("stats: client from fd %d closed connection", sd);
 		goto stats_recv_err;
 	} else {
-		stats_debug_log("stats: received %zd bytes from tcp client fd %d", bytes_read, sd);
+		//stats_debug_log("stats: received %zd bytes from tcp client fd %d", bytes_read, sd);
 	}
 
 	session->server->bytes_recv_tcp += bytes_read;
