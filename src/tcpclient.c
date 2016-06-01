@@ -392,6 +392,7 @@ int tcpclient_sendall(tcpclient_t *client, const char *buf, size_t len) {
 					buffer_datacount(&client->send_queue),
 					client->config->max_send_queue);
 
+			client->failing = 1;
 		}
 		return 2;
 	}
