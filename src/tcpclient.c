@@ -55,6 +55,18 @@ static void tcpclient_connect_timeout(struct ev_loop *loop, struct ev_timer *wat
 	client->callback_error(client, EVENT_ERROR, client->callback_context, NULL, 0);
 }
 
+static bool tcpclient_reconnect(tcpclient_t *client) {
+	size_t max_send_queue = 0;
+
+	if (client->config->auto_reconnect) {
+		max_send_queue = client->config->reconnect_threshold * client->config->max_send_queue;
+
+		if (buffer_datacount(&client->send_queue) >= max_send_queue)
+			return true;
+	}
+	return false;
+}
+
 int tcpclient_init(tcpclient_t *client,
 		struct ev_loop *loop,
 		void *callback_context,
@@ -161,8 +173,8 @@ static void tcpclient_write_event(struct ev_loop *loop, struct ev_io *watcher, i
 	ssize_t buf_len = buffer_datacount(sendq);
 	if (buf_len > 0) {
 		ssize_t send_len = send(client->sd, sendq->head, buf_len, 0);
-		//stats_debug_log("tcpclient: sent %zd of %zd bytes to backend client %s via fd %d",
-		//		send_len, buf_len, client->name, client->sd);
+		stats_debug_log("tcpclient: sent %zd of %zd bytes to backend client %s via fd %d",
+				send_len, buf_len, client->name, client->sd);
 		if (send_len < 0) {
 			stats_error_log("tcpclient[%s]: Error from send: %s", client->name, strerror(errno));
 			ev_io_stop(client->loop, &client->write_watcher.watcher);
@@ -350,14 +362,32 @@ int tcpclient_sendall(tcpclient_t *client, const char *buf, size_t len) {
 	// reconnect if backoff has expired.
 	tcpclient_connect(client);
 
-	if (buffer_datacount(&client->send_queue) >= client->config->max_send_queue) {
+	if (tcpclient_reconnect(client)) {
+		if (client->failing == 0) {
+			stats_log("tcpclient[%s]: send queue for %s client is >= (%zd bytes), reconnecting! (at %zd bytes, max is %" PRIu64 " bytes), dropping data",
+					client->name,
+					tcpclient_state_name[client->state],
+					client->config->max_send_queue * client->config->reconnect_threshold,
+					buffer_datacount(&client->send_queue),
+					client->config->max_send_queue);
+
+			client->failing = 1;
+			ev_io_stop(client->loop, &client->read_watcher.watcher);
+			ev_io_stop(client->loop, &client->write_watcher.watcher);
+			close(client->sd);
+			tcpclient_set_state(client, STATE_INIT);
+			client->last_error = time(NULL);
+			client->callback_error(client, EVENT_ERROR, client->callback_context, NULL, 0);
+			return 1;
+		}
+	} else if (buffer_datacount(&client->send_queue) >= client->config->max_send_queue) {
 		if (client->failing == 0) {
 			stats_error_log("tcpclient[%s]: send queue for %s client is full (at %zd bytes, max is %" PRIu64 " bytes), dropping data",
 					client->name,
 					tcpclient_state_name[client->state],
 					buffer_datacount(&client->send_queue),
 					client->config->max_send_queue);
-			client->failing = 1;
+
 		}
 		return 2;
 	}

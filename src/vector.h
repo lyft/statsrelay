@@ -24,4 +24,7 @@ size_t vector_size(list_t);
 // pad items to the left
 bool vector_pad(list_t, int );
 
+// debug routine
+void vector_dump(list_t);
+
 #endif
