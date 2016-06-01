@@ -24,5 +24,4 @@ void statsrelay_list_destroy(list_t list);
 // deallocate the list and its contents
 void statsrelay_list_destroy_full(list_t list);
 
-
 #endif  // STATSRELAY_LIST_H

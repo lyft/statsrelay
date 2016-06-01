@@ -148,6 +148,7 @@ static void* make_backend(const char *host_and_port, void *data, hashring_type_t
 	} else {
 		backend = find_backend(server->backend_list, server->num_backends, full_key);
 	}
+
 	if (backend != NULL) {
 		free(host);
 		free(port);
@@ -202,6 +203,7 @@ make_err:
 	free(port);
 	free(protocol);
 	free(full_key);
+	free(full_key_metrics);
 	return NULL;
 }
 

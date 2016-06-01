@@ -68,8 +68,12 @@ static void quick_shutdown(struct ev_loop *loop, ev_signal *w, int revents) {
 	shutdown_client_sockets(&servers);
 	destroy_server_collection(&servers);
 	ev_break(loop, EVBREAK_ALL);
-}
 
+	if (pid_file != NULL) {
+		stats_debug_log("Removing pidfile %s", pid_file);
+		remove_pid(pid_file);
+	}
+}
 
 static void hot_restart(struct ev_loop *loop, ev_signal *w, int revents) {
 	pid_t pid, old_pid;

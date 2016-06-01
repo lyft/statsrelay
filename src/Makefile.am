@@ -9,4 +9,4 @@ check_PROGRAMS=test_hashlib test_hashring test_vector
 TESTS=$(check_PROGRAMS) tests/test_endtoend.py
 test_hashlib_SOURCES=tests/test_hashlib.c hashlib.c
 test_hashring_SOURCES=tests/test_hashring.c hashlib.c hashring.c list.c log.c
-test_vector_SOURCES=tests/test_vector.c vector.c log.c
+test_vector_SOURCES=tests/test_vector.c vector.c log.c list.c
