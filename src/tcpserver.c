@@ -101,7 +101,7 @@ static void tcpsession_recv_callback(struct ev_loop *loop,
 static void tcplistener_accept_callback(struct ev_loop *loop,
 		struct ev_io *watcher,
 		int revents) {
-	stats_debug_log("in tcplistener_accept_callback pid:%d, parentpid:%d", getpid(), getppid());
+	stats_debug_log("tcplistener_accept_callback pid:%d, parentpid:%d", getpid(), getppid());
 	socklen_t sin_size;
 	tcplistener_t *listener;
 	tcpsession_t *session;
@@ -150,7 +150,6 @@ static void tcplistener_accept_callback(struct ev_loop *loop,
 		listener->clients->data[session->sd] = (void *)session;
 		vector_dump(listener->clients);
 	} else {
-		stats_debug_log("tcplistener_accept_callback: adding %d", session->sd);
 		vector_add(listener->clients, (void *)session);
 		vector_dump(listener->clients);
 	}

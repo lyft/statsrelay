@@ -46,8 +46,8 @@ void statsrelay_list_destroy(list_t list) {
 }
 
 void statsrelay_list_destroy_full(list_t list) {
-	size_t i = 0;
-	for (; i < list->size; i++) {
+	size_t i;
+	for (i = 0; i < list->size; i++) {
 		free(list->data[i]);
 	}
 	statsrelay_list_destroy(list);
