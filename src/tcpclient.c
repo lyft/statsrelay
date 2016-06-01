@@ -382,8 +382,8 @@ int tcpclient_sendall(tcpclient_t *client, const char *buf, size_t len) {
 	if (tcpclient_shouldreconnect(client)) {
 		if (client->failing == 0) {
 			tcpclient_disconnect(client);
-			return 1;
 		}
+		return 1;
 	} else if (buffer_datacount(&client->send_queue) >= client->config->max_send_queue) {
 		if (client->failing == 0) {
 			stats_error_log("tcpclient[%s]: send queue for %s client is full (at %zd bytes, max is %" PRIu64 " bytes), dropping data",
