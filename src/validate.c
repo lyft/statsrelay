@@ -18,7 +18,32 @@ static size_t valid_stat_types_len = 6;
 // there by a GNU extention:
 // "The memrchr() function  is  a  GNU  extension,  available  since  glibc 2.1.91."
 // (http://manpages.ubuntu.com/manpages/xenial/man3/memchr.3.html)
+/* HACK: for OSX debugging */
+#ifndef HAS_MEMRCHR
+/*
+ * Reverse memchr()
+ * Find the last occurrence of 'c' in the buffer 's' of size 'n'.
+ */
+void *
+memrchr(s, c, n)
+    const void *s;
+    int c;
+    size_t n;
+{
+    const unsigned char *cp;
+
+    if (n != 0) {
+	cp = (unsigned char *)s + n;
+	do {
+	    if (*(--cp) == (unsigned char)c)
+		return (void *)cp;
+	} while (--n != 0);
+    }
+    return (void *)0;
+}
+#else
 extern void *memrchr(const void*, int, size_t);
+#endif
 
 int validate_statsd(const char *line, size_t len, validate_parsed_result_t* result) {
     size_t plen;

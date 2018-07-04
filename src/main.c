@@ -6,6 +6,7 @@
 
 #include <ctype.h>
 #include <getopt.h>
+#include <jansson.h>
 #ifdef HAVE_MALLOC_H
 #include <malloc.h>
 #endif
@@ -60,6 +61,45 @@ static void quick_shutdown(struct ev_loop *loop, ev_signal *w, int revents) {
     ev_break(loop, EVBREAK_ALL);
 }
 
+static void dump_shard_map(struct ev_loop *loop, ev_signal *w, int revents) {
+    stats_log("main: received SIGUSR1, dumping shard_map.");
+
+    FILE *f;
+    int fd;
+    // TODO: no hardcode path
+    if ((fd = open("/tmp/shard_map.json", O_RDWR|O_CREAT, 0644)) == -1) {
+        stats_error_log("dump_shard_map: failed to open or create /tmp/shard_map.json");
+        return;
+    }
+
+    if ((f = fdopen(fd, "r+")) == NULL) {
+        stats_error_log("dump_shard_map: fdopen failed");
+        close(fd);
+        return;
+    }
+
+    struct config *cfg = (struct config *) w->data;
+    list_t ring = cfg->statsd_config.ring;
+
+    json_t *out_object = json_object();
+    json_t *shard_map = json_array();
+    for (int i = 0; i < ring->size; ++i) {
+        char *serverline = (char *) ring->data[i];
+        json_t *out_line = json_string(serverline);
+        json_array_append(shard_map, out_line);
+    }
+    json_object_set(out_object, "shard_map", shard_map);
+
+    if (json_dumpf(out_object, f, 0x0) == -1) {
+        stats_error_log("dump_shard_map: json_dumpf failed");
+    } else {
+        fflush(f);
+    }
+
+    close(fd);
+    fclose(f);
+    json_delete(out_object);
+}
 
 static void hot_restart(struct ev_loop *loop, ev_signal *w, int revents) {
     pid_t pid, old_pid;
@@ -185,7 +225,7 @@ static void print_help(const char *argv0) {
 }
 
 int main(int argc, char **argv, char **envp) {
-    ev_signal sigint_watcher, sigterm_watcher, sigusr2_watcher;
+    ev_signal sigint_watcher, sigterm_watcher, sigusr1_watcher, sigusr2_watcher;
     char *lower;
     char c = 0;
     bool just_check_config = false;
@@ -292,6 +332,10 @@ int main(int argc, char **argv, char **envp) {
 
     ev_signal_init(&sigterm_watcher, graceful_shutdown, SIGTERM);
     ev_signal_start(loop, &sigterm_watcher);
+
+    sigusr1_watcher.data = (void *) cfg;
+    ev_signal_init(&sigusr1_watcher, dump_shard_map, SIGUSR1);
+    ev_signal_start(loop, &sigusr1_watcher);
 
     ev_signal_init(&sigusr2_watcher, hot_restart, SIGUSR2);
     ev_signal_start(loop, &sigusr2_watcher);
