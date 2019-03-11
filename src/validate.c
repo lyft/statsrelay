@@ -4,6 +4,45 @@
 
 #include <string.h>
 
+// macOS does not provide memrchr
+#if defined(__APPLE__) && defined(__MACH__)
+    // macOS specific so only check for clang, for GCC check
+    // that the version is greater than 4.5
+    #ifdef __clang__
+        #pragma GCC diagnostic push
+    #endif
+    #ifdef __GNUC__
+        #pragma GCC diagnostic ignored "-Wcast-qual"
+    #endif
+    // helper function to cast away const
+    static void* cast_away_const(const void* ptr) {
+        return (void*)ptr;
+    }
+    #ifdef __clang__
+        #pragma GCC diagnostic pop
+    #endif
+
+    static void * memrchr(const void *s, int c_in, size_t n) {
+        const unsigned char c = (const unsigned char)c_in;
+        const unsigned char *p = (const unsigned char *)s;
+        p += n;
+        while (n--) {
+            if (*--p == c) {
+                return (void *)cast_away_const(p);
+            }
+        }
+        return NULL;
+    }
+#else
+    // For some reason this is not in string.h, probably because it was
+    // introduced there by a GNU extention:
+    //
+    // "The memrchr() function  is  a  GNU  extension,  available  since  glibc 2.1.91."
+    // (http://manpages.ubuntu.com/manpages/xenial/man3/memchr.3.html)
+    //
+    extern void *memrchr(const void*, int, size_t);
+#endif
+
 static const char * const valid_stat_types[6] = {
     "c",
     "ms",
@@ -13,12 +52,6 @@ static const char * const valid_stat_types[6] = {
     "s"
 };
 static const int valid_stat_types_len = 6;
-
-// For some reason this is not in string.h, probably because it was introduced
-// there by a GNU extention:
-// "The memrchr() function  is  a  GNU  extension,  available  since  glibc 2.1.91."
-// (http://manpages.ubuntu.com/manpages/xenial/man3/memchr.3.html)
-extern void *memrchr(const void*, int, size_t);
 
 static metric_type parse_stat_type(const char *str, size_t len) {
     if (1 <= len && len <= 2) {
