@@ -59,6 +59,7 @@ set(SOURCE_FILES
 add_executable(statsrelay ${SOURCE_FILES} src/main.c)
 add_executable(stresstest src/stresstest.c)
 add_executable(stathasher ${SOURCE_FILES} src/stathasher.c)
+add_executable(devnull test/devnull.c)
 
 target_link_libraries(stathasher ev pcre jansson)
 target_link_libraries(statsrelay ev pcre jansson)

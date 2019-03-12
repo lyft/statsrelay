@@ -1,28 +1,35 @@
+#include <errno.h>
+#include <netdb.h>
 #include <netinet/in.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <netdb.h>
-#include <string.h>
-#include <stdio.h>
+#include <unistd.h>
 
-void devnull(int fd) {
-    char buf[65536];
-    size_t len;
+#define unlikely(x) __builtin_expect(!!(x), 0)
 
+static void devnull(const int fd) {
+    char buf[65536] __attribute__((aligned(4096))); // Page align
+    size_t total = 0;
     while (1) {
-        len = read(fd, buf, 65536);
-        if (len < 1) {
-            fprintf(stderr, "Child exiting\n");
+        ssize_t len = read(fd, buf, 65536);
+        if (unlikely(len <= 0)) {
+            if (len == 0) {
+                fprintf(stderr, "Child exiting: EOF: %zu\n", total);
+            } else {
+                fprintf(stderr, "Child exiting: %s: %zu\n", strerror(errno), total);
+            }
             return;
         }
+        total += len;
     }
 }
 
 int main(int argc, char *argv[]) {
-    int sd;
-
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <port>\n", argv[0]);
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s <PORT>\n", argv[0]);
         return 1;
     }
 
@@ -39,17 +46,32 @@ int main(int argc, char *argv[]) {
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;     // fill in my IP for me
 
-    getaddrinfo(NULL, argv[1], &hints, &res);
+    const char *addr = argv[1];
+    int ret = getaddrinfo(NULL, addr, &hints, &res) != 0;
+    if (ret != 0) {
+        fprintf(stderr, "Error: getaddrinfo: %s: '%s'\n", gai_strerror(ret), addr);
+        return 1;
+    }
 
     // make a socket:
 
     sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sockfd == -1) {
+        perror("Error: socket");
+        return 1;
+    }
 
     // bind it to the port we passed in to getaddrinfo():
 
-    bind(sockfd, res->ai_addr, res->ai_addrlen);
+    if (bind(sockfd, res->ai_addr, res->ai_addrlen) != 0) {
+        perror("Error: bind");
+        return 1;
+    }
 
-    listen(sockfd, 1);
+    if (listen(sockfd, 1) != 0) {
+        perror("Error: listen");
+        return 1;
+    }
 
     while (1) {
         acceptfd = accept(sockfd, (struct sockaddr *)&their_addr, &addr_size);
