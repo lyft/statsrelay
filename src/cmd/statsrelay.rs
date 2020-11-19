@@ -130,4 +130,5 @@ async fn reload_config_from_file(backends: &backends::Backends, path: &str) {
             }
         }
     }
+    info!("backends reloaded");
 }
