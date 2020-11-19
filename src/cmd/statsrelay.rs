@@ -48,7 +48,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let mut runtime = builder.enable_all().build().unwrap();
-    debug!("built tokio runtime");
+    info!("tokio runtime built, threaded: {}", opts.threaded);
 
     runtime.block_on(async move {
         let backends = backends::Backends::new();
