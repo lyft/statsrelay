@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
@@ -13,7 +14,7 @@ use log::warn;
 
 struct StatsdBackend {
     conf: StatsdDuplicateTo,
-    ring: Ring<StatsdClient>,
+    ring: RwLock<Ring<StatsdClient>>,
     input_filter: Option<RegexSet>,
     warning_log: AtomicU64,
 }
@@ -35,20 +36,54 @@ impl StatsdBackend {
             None
         };
 
-        let mut backend = StatsdBackend {
+        let mut ring: Ring<StatsdClient> = Ring::new();
+
+        // Use the same backend for the same endpoint address, caching the lookup locally
+        let mut memoize: HashMap<String, StatsdClient> = HashMap::new();
+        for endpoint in &conf.shard_map {
+            if let Some(client) = memoize.get(endpoint) {
+                ring.push(client.clone())
+            } else {
+                let client = StatsdClient::new(endpoint.as_str(), 100000);
+                memoize.insert(endpoint.clone(), client.clone());
+                ring.push(client);
+            }
+        }
+
+        let backend = StatsdBackend {
             conf: conf.clone(),
-            ring: Ring::new(),
+            ring: RwLock::new(ring),
             input_filter: input_filter,
             warning_log: AtomicU64::new(0),
         };
 
-        for endpoint in &conf.shard_map {
-            backend
-                .ring
-                .push(StatsdClient::new(endpoint.as_str(), 100000));
-        }
-
         Ok(backend)
+    }
+
+    fn reload_backends(&mut self, shard_map: Vec<String>) -> anyhow::Result<()> {
+        let mut new_ring: Ring<StatsdClient> = Ring::new();
+        let mut memoize: HashMap<String, StatsdClient> = HashMap::new();
+
+        // Capture the old ring contents into a memoization map by endpoint,
+        // letting us re-use any old client connections and buffers. Note we
+        // won't start tearing down connections until the memoization buffer and
+        // old ring are both dropped.
+        {
+            let ring_read = self.ring.read();
+            for i in 0..self.ring.read().len() {
+                let client = ring_read.pick_from(i as u32);
+                memoize.insert(String::from(client.endpoint()), client.clone());
+            }
+        }
+        for shard in shard_map {
+            if let Some(client) = memoize.get(&shard) {
+                new_ring.push(client.clone());
+            } else {
+                new_ring.push(StatsdClient::new(shard.as_str(), 100000));
+            }
+        }
+        self.ring.write().swap(new_ring);
+        Ok(())
     }
 
     fn provide_statsd_pdu(&self, pdu: &StatsdPDU) {
@@ -59,13 +94,14 @@ impl StatsdBackend {
         {
             return;
         }
-        // All the other logic
 
-        let code = match self.ring.len() {
+        let ring_read = self.ring.read();
+        let code = match ring_read.len() {
+            0 => return, // In case of nothing to send, do nothing
             1 => 1 as u32,
             _ => statsrelay_compat_hash(pdu),
         };
-        let client = self.ring.pick_from(code);
+        let client = ring_read.pick_from(code);
         let mut sender = client.sender();
 
         // Assign prefix and/or suffix

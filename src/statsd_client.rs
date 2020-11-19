@@ -8,12 +8,17 @@ use tokio::sync::mpsc;
 use tokio::time::{delay_for, timeout};
 
 use std::time::Duration;
+use std::sync::Arc;
 
 use log::{info, warn};
 
 use crate::statsd::StatsdPDU;
 
 pub struct StatsdClient {
+    inner: Arc<StatsdClientInner>,
+}
+
+struct StatsdClientInner {
     endpoint: String,
     sender: mpsc::Sender<StatsdPDU>,
     _trig: Trigger,
@@ -29,7 +34,7 @@ impl StatsdClient {
         // Currently, we need this tripwire to abort connection looping. This can probably be refactored
         let (trig, trip) = Tripwire::new();
         let (sender, recv) = mpsc::channel::<StatsdPDU>(channel_buffer);
-        let client = StatsdClient {
+        let inner = StatsdClientInner {
             endpoint: endpoint.to_string(),
             sender,
             _trig: trig,
@@ -38,15 +43,25 @@ impl StatsdClient {
         let (ticker_sender, ticker_recv) = mpsc::channel::<bool>(1);
         tokio::spawn(ticker(ticker_sender));
         tokio::spawn(client_task(eps, trip, recv, ticker_recv));
-        client
+        StatsdClient{
+            inner: Arc::new(inner)
+        }
     }
 
     pub fn sender(&self) -> mpsc::Sender<StatsdPDU> {
-        self.sender.clone()
+        self.inner.sender.clone()
     }
 
     pub fn endpoint(&self) -> &str {
-        return self.endpoint.as_str();
+        return self.inner.endpoint.as_str();
+    }
+}
+
+impl Clone for StatsdClient {
+    fn clone(&self) -> Self {
+        StatsdClient {
+            inner: self.inner.clone()
+        }
     }
 }
 

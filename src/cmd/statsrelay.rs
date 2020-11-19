@@ -16,6 +16,9 @@ use statsrelay::statsd_server;
 struct Options {
     #[structopt(short = "c", long = "--config", default_value = "/etc/statsrelay.json")]
     pub config: String,
+
+    #[structopt(short = "t", long = "--threaded")]
+    pub threaded: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -38,15 +41,16 @@ fn main() -> anyhow::Result<()> {
 
     debug!("installed metrics receiver");
 
-    let mut threaded_rt = runtime::Builder::new()
-        .enable_all()
-        .threaded_scheduler()
-        .build()
-        .unwrap();
+    let mut builder = &mut runtime::Builder::new();
+    builder = match opts.threaded {
+        true => builder.threaded_scheduler(),
+        false => builder.basic_scheduler(),
+    };
 
+    let mut runtime = builder.enable_all().build().unwrap();
     debug!("built tokio runtime");
 
-    threaded_rt.block_on(async move {
+    runtime.block_on(async move {
         let backends = backends::Backends::new();
         if config.statsd.shard_map.len() > 0 {
             backends.add_statsd_backend(&statsrelay::config::StatsdDuplicateTo::from_shards(
@@ -70,7 +74,7 @@ fn main() -> anyhow::Result<()> {
         run.await;
     });
 
-    drop(threaded_rt);
+    drop(runtime);
     info!("runtime terminated");
     Ok(())
 }
