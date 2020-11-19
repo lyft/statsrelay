@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use regex::bytes::RegexSet;
+use thiserror::Error;
 
 use crate::config::StatsdDuplicateTo;
 use crate::shard::{statsrelay_compat_hash, Ring};
@@ -128,6 +129,12 @@ impl StatsdBackend {
     }
 }
 
+#[derive(Error, Debug)]
+pub enum BackendError {
+    #[error("Index not valid for backend {0}")]
+    InvalidIndex(usize),
+}
+
 struct BackendsInner {
     statsd: Vec<StatsdBackend>,
 }
@@ -148,6 +155,18 @@ impl BackendsInner {
             Some(backend) => backend,
         };
         self.statsd[idx] = StatsdBackend::new(c, Some(backend))?;
+        Ok(())
+    }
+
+    fn len(&self) -> usize {
+        self.statsd.len()
+    }
+
+    fn remove_statsd_backend(&mut self, idx: usize) -> anyhow::Result<()> {
+        if self.statsd.len() >= idx {
+            return Err(anyhow::Error::new(BackendError::InvalidIndex(idx)));
+        }
+        self.statsd.remove(idx);
         Ok(())
     }
 
@@ -182,6 +201,14 @@ impl Backends {
 
     pub fn replace_statsd_backend(&self, idx: usize, c: &StatsdDuplicateTo) -> anyhow::Result<()> {
         self.inner.write().replace_statsd_backend(idx, c)
+    }
+
+    pub fn remove_statsd_backend(&self, idx: usize) -> anyhow::Result<()> {
+        self.inner.write().remove_statsd_backend(idx)
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.read().len()
     }
 
     pub fn provide_statsd_pdu(&self, pdu: StatsdPDU) {
