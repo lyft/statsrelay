@@ -7,14 +7,15 @@ use tokio::select;
 use tokio::sync::mpsc;
 use tokio::time::{delay_for, timeout};
 
-use std::time::Duration;
 use std::sync::Arc;
+use std::time::Duration;
 
 use log::{info, warn};
 
 use crate::statsd::StatsdPDU;
 
 pub struct StatsdClient {
+    sender: mpsc::Sender<StatsdPDU>,
     inner: Arc<StatsdClientInner>,
 }
 
@@ -36,20 +37,21 @@ impl StatsdClient {
         let (sender, recv) = mpsc::channel::<StatsdPDU>(channel_buffer);
         let inner = StatsdClientInner {
             endpoint: endpoint.to_string(),
-            sender,
+            sender: sender.clone(),
             _trig: trig,
         };
         let eps = String::from(endpoint);
         let (ticker_sender, ticker_recv) = mpsc::channel::<bool>(1);
         tokio::spawn(ticker(ticker_sender));
         tokio::spawn(client_task(eps, trip, recv, ticker_recv));
-        StatsdClient{
-            inner: Arc::new(inner)
+        StatsdClient {
+            inner: Arc::new(inner),
+            sender: sender,
         }
     }
 
     pub fn sender(&self) -> mpsc::Sender<StatsdPDU> {
-        self.inner.sender.clone()
+        self.sender.clone()
     }
 
     pub fn endpoint(&self) -> &str {
@@ -60,7 +62,8 @@ impl StatsdClient {
 impl Clone for StatsdClient {
     fn clone(&self) -> Self {
         StatsdClient {
-            inner: self.inner.clone()
+            inner: self.inner.clone(),
+            sender: self.inner.sender.clone(),
         }
     }
 }
