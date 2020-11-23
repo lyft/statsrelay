@@ -7,6 +7,7 @@ description = "Swiss army knife for aggregation, filtering, relaying, sharding o
 license = "MIT"
 keywords = ["statsd", "metrics", "aggregation"]
 categories = ["development-tools"]
+repository = "https://github.com/lyft/statsrelay"
 
 [[bin]]
 name = "statsrelay"
