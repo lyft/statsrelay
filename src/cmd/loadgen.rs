@@ -1,9 +1,9 @@
 use bytes::{BufMut, BytesMut};
 use chrono::prelude::*;
+use std::time::Duration;
 use structopt::StructOpt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-use std::time::Duration;
 
 const PRINT_INTERVAL: u64 = 100000;
 

@@ -2,8 +2,10 @@ use bytes::{BufMut, BytesMut};
 use memchr::memchr;
 use statsdproto::statsd::StatsdPDU;
 use stream_cancel::Tripwire;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::unix;
+use tokio::net::{TcpListener, UnixListener, UnixStream};
 use tokio::select;
 use tokio::time::timeout;
 
@@ -17,6 +19,7 @@ use std::time::Duration;
 use log::{debug, info, warn};
 
 use crate::backends::Backends;
+use crate::config::StatsdServerConfig;
 use crate::stats;
 
 const TCP_READ_TIMEOUT: Duration = Duration::from_secs(62);
@@ -110,10 +113,11 @@ fn process_buffer_newlines(buf: &mut BytesMut) -> Vec<StatsdPDU> {
     return ret;
 }
 
-async fn client_handler(
+async fn client_handler<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
     stats: stats::Scope,
+    peer: String,
     mut tripwire: Tripwire,
-    mut socket: TcpStream,
+    mut socket: T,
     backends: Backends,
 ) {
     let mut buf = BytesMut::with_capacity(READ_BUFFER);
@@ -138,10 +142,7 @@ async fn client_handler(
 
         match result {
             Ok(bytes) if buf.is_empty() && bytes == 0 => {
-                debug!(
-                    "closing reader (empty buffer, eof) {:?}",
-                    socket.peer_addr()
-                );
+                debug!("closing reader (empty buffer, eof) {}", peer);
                 break;
             }
             Ok(bytes) if bytes == 0 => {
@@ -160,7 +161,7 @@ async fn client_handler(
                     None => (),
                 };
                 debug!("remaining {:?}", buf);
-                debug!("closing reader {:?}", socket.peer_addr());
+                debug!("closing reader {}", peer);
                 break;
             }
             Ok(bytes) => {
@@ -182,11 +183,11 @@ async fn client_handler(
                 break;
             }
             Err(e) if e.kind() == ErrorKind::TimedOut => {
-                debug!("read timeout, closing {:?}", socket.peer_addr());
+                debug!("read timeout, closing {}", peer);
                 break;
             }
             Err(e) => {
-                debug!("socket error {:?} from {:?}", e, socket.peer_addr());
+                debug!("socket error {:?} {}", e, peer);
                 break;
             }
         }
@@ -194,43 +195,90 @@ async fn client_handler(
     disconnects.inc();
 }
 
-pub async fn run(stats: stats::Scope, tripwire: Tripwire, bind: String, backends: Backends) {
-    //self.shutdown_trigger = Some(trigger);
-    let listener = TcpListener::bind(bind.as_str()).await.unwrap();
+/// Wrapper type to adapt an optional listener and either return an accept
+/// future, or a pending future which never returns. This wrapper is needed to
+/// work around that .accept() is an opaque impl Future type, so can't be
+/// readily mixed into a stream.
+async fn optional_accept(
+    listener: Option<&UnixListener>,
+) -> std::io::Result<(UnixStream, unix::SocketAddr)> {
+    if listener.is_some() {
+        listener.unwrap().accept().await
+    } else {
+        futures::future::pending::<std::io::Result<(UnixStream, unix::SocketAddr)>>().await
+    }
+}
+
+pub async fn run(
+    stats: stats::Scope,
+    tripwire: Tripwire,
+    config: StatsdServerConfig,
+    backends: Backends,
+) {
+    let tcp_listener = TcpListener::bind(config.bind.as_str()).await.unwrap();
+    info!("statsd tcp server running on {}", config.bind);
+
+    let unix_listener = config.socket.as_ref().map(|socket| {
+        let unix = UnixListener::bind(socket.as_str()).unwrap();
+        info!("statsd unix server running on {}", socket);
+        unix
+    });
+
+    // Spawn the threaded, non-async blocking UDP server
     let mut udp = UdpServer::new();
-    let bind_clone = bind.clone();
-    let udp_join = udp.udp_worker(stats.scope("udp"), bind_clone, backends.clone());
-    info!("statsd tcp server running on {}", bind);
+    let udp_join = udp.udp_worker(stats.scope("udp"), config.bind.clone(), backends.clone());
 
     let accept_connections = stats.counter("accepts").unwrap();
+    let accept_connections_unix = stats.counter("accepts_unix").unwrap();
     let accept_failures = stats.counter("accept_failures").unwrap();
+    let accept_failures_unix = stats.counter("accept_failures_unix").unwrap();
 
     async move {
         loop {
             select! {
                 _ = tripwire.clone() => {
-                    info!("stopped tcp listener loop");
+                    info!("stopped stream listener loop");
                     return
                 }
-                socket_res = listener.accept() => {
-
-                match socket_res {
-                    Ok((socket, _)) => {
-                        debug!("accepted connection from {:?}", socket.peer_addr());
-                        accept_connections.inc();
-                        tokio::spawn(client_handler(stats.scope("connections"), tripwire.clone(), socket, backends.clone()));
-                    }
-                    Err(err) => {
-                        accept_failures.inc();
-                        info!("accept error = {:?}", err);
+                // Wrap the unix acceptor for different stats
+                unix_res = optional_accept(unix_listener.as_ref()) => {
+                    match unix_res {
+                        Ok((socket,_)) => {
+                            let peer_addr = format!("{:?}", socket.peer_addr());
+                            debug!("accepted unix connection from {:?}", socket.peer_addr());
+                            accept_connections_unix.inc();
+                            tokio::spawn(client_handler(stats.scope("connections_unix"), peer_addr, tripwire.clone(), socket, backends.clone()));
+                        }
+                        Err(err) => {
+                            accept_failures_unix.inc();
+                            info!("unix accept error = {:?}", err);
+                        }
                     }
                 }
-            }
+                socket_res = tcp_listener.accept() => {
+
+                    match socket_res {
+                        Ok((socket,_)) => {
+                            let peer_addr = format!("{:?}", socket.peer_addr());
+                            debug!("accepted connection from {:?}", socket.peer_addr());
+                            accept_connections.inc();
+                            tokio::spawn(client_handler(stats.scope("connections"), peer_addr, tripwire.clone(), socket, backends.clone()));
+                        }
+                        Err(err) => {
+                            accept_failures.inc();
+                            info!("accept error = {:?}", err);
+                        }
+                    }
+                }
             }
         }
     }
     .await;
     drop(udp);
+    // The socket file descriptor is not removed on teardown. Lets remove it if enabled.
+    if let Some(socket) = config.socket.as_ref() {
+        let _ = std::fs::remove_file(socket);
+    }
     tokio::task::spawn_blocking(move || {
         udp_join.join().unwrap();
     })

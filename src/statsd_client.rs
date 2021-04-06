@@ -209,10 +209,10 @@ async fn ticker(endpoint: String, sender: mpsc::Sender<bool>) {
     loop {
         sleep(SEND_DELAY).await;
         match sender.send(true).await {
-            Err(_) =>{
+            Err(_) => {
                 info!("ticker task {} exiting", endpoint);
                 return;
-            },
+            }
             Ok(_) => (),
         };
     }
@@ -278,7 +278,7 @@ async fn client_task(
             Err(_e) => {
                 info!("client task {} exiting", endpoint);
                 return;
-            },
+            }
             Ok(_) => (),
         };
         buf = BytesMut::with_capacity(INITIAL_BUF_CAPACITY);

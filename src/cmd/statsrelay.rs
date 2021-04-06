@@ -5,6 +5,7 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 use anyhow::Context;
 use futures::StreamExt;
+use futures::{stream::FuturesUnordered, FutureExt};
 use stream_cancel::Tripwire;
 use structopt::StructOpt;
 
@@ -17,12 +18,12 @@ use tokio::signal::unix::{signal, SignalKind};
 use env_logger::Env;
 use log::{debug, error, info};
 
-use statsrelay::admin;
 use statsrelay::backends;
 use statsrelay::config;
 use statsrelay::discovery;
 use statsrelay::stats;
 use statsrelay::statsd_server;
+use statsrelay::{admin, config::Config};
 
 #[derive(StructOpt, Debug)]
 struct Options {
@@ -31,6 +32,86 @@ struct Options {
 
     #[structopt(short = "t", long = "--threaded")]
     pub threaded: bool,
+}
+
+/// The main server invocation, for a given configuration, options and stats
+/// scope. The server will spawn any listeners, initialize a backend
+/// configuration update loop, as well as register signal handlers.
+async fn server(scope: stats::Scope, config: Config, opts: Options) {
+    let backends = backends::Backends::new(scope.scope("backends"));
+
+    let backend_reloads = scope.counter("backend_reloads").unwrap();
+
+    let (sender, tripwire) = Tripwire::new();
+    let mut run: FuturesUnordered<_> = config
+        .statsd
+        .servers
+        .iter()
+        .map({
+            |(server_name, server_config)| {
+                let name = server_name.clone();
+                statsd_server::run(
+                    scope.scope("statsd_server").scope(server_name),
+                    tripwire.clone(),
+                    server_config.clone(),
+                    backends.clone(),
+                )
+                .map(|_| name)
+            }
+        })
+        .collect();
+
+    // Trap ctrl+c and sigterm messages and perform a clean shutdown
+    let mut sigint = signal(SignalKind::interrupt()).unwrap();
+    let mut sigterm = signal(SignalKind::terminate()).unwrap();
+    tokio::spawn(async move {
+        select! {
+        _ = sigint.recv() => info!("received sigint"),
+        _ = sigterm.recv() => info!("received sigterm"),
+        }
+        sender.cancel();
+    });
+
+    // Trap sighup to support manual file reloading
+    let mut sighup = signal(SignalKind::hangup()).unwrap();
+    // This task is designed to asynchronously build backend configurations,
+    // which may in turn come from other data sources or discovery sources.
+    // This inherently races with bringing up servers, to the point where a
+    // server may not have any backends to dispatch to yet, if discovery is
+    // very slow. This is the intended state, as configuration of processors
+    // and any buffers should have already been performed.
+    //
+    // SIGHUP will attempt to reload backend configurations as well as any
+    // discovery changes.
+    tokio::spawn(async move {
+        let dconfig = config.discovery.unwrap_or_default();
+        let discovery_cache = discovery::Cache::new();
+        let mut discovery_stream =
+            discovery::reflector(discovery_cache.clone(), discovery::as_stream(&dconfig));
+        loop {
+            info!("loading configuration and updating backends");
+            backend_reloads.inc();
+            let config = load_backend_configs(&discovery_cache, &backends, opts.config.as_ref())
+                .await
+                .unwrap();
+            let dconfig = config.discovery.unwrap_or_default();
+
+            tokio::select! {
+                _ = sighup.recv() => {
+                    info!("received sighup");
+                    discovery_stream = discovery::reflector(discovery_cache.clone(), discovery::as_stream(&dconfig));
+                    info!("reloaded discovery stream");
+                }
+                Some(event) = discovery_stream.next() => {
+                    info!("updating discovery for map {}", event.0);
+                }
+            };
+        }
+    });
+
+    while let Some(name) = run.next().await {
+        debug!("server {} exited", name)
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -46,7 +127,7 @@ fn main() -> anyhow::Result<()> {
     let config = statsrelay::config::load(opts.config.as_ref())
         .with_context(|| format!("can't load config file from {}", opts.config))?;
     info!("loaded config file {}", opts.config);
-    debug!("bind address: {}", config.statsd.bind);
+    debug!("servers defined: {:?}", config.statsd.servers);
 
     let collector = stats::Collector::default();
 
@@ -67,60 +148,7 @@ fn main() -> anyhow::Result<()> {
     let scope = collector.scope("statsrelay");
 
     runtime.block_on(async move {
-        let backends = backends::Backends::new(scope.scope("backends"));
-
-        let backend_reloads = scope.counter("backend_reloads").unwrap();
-
-        let (sender, tripwire) = Tripwire::new();
-        let run = statsd_server::run(scope.scope("statsd_server"), tripwire, config.statsd.bind.clone(), backends.clone());
-
-        // Trap ctrl+c and sigterm messages and perform a clean shutdown
-        let mut sigint = signal(SignalKind::interrupt()).unwrap();
-        let mut sigterm = signal(SignalKind::terminate()).unwrap();
-        tokio::spawn(async move {
-            select! {
-            _ = sigint.recv() => info!("received sigint"),
-            _ = sigterm.recv() => info!("received sigterm"),
-            }
-            sender.cancel();
-        });
-
-        // Trap sighup to support manual file reloading
-        let mut sighup = signal(SignalKind::hangup()).unwrap();
-        // This task is designed to asynchronously build backend configurations,
-        // which may in turn come from other data sources or discovery sources.
-        // This inherently races with bringing up servers, to the point where a
-        // server may not have any backends to dispatch to yet, if discovery is
-        // very slow. This is the intended state, as configuration of processors
-        // and any buffers should have already been performed.
-        //
-        // SIGHUP will attempt to reload backend configurations as well as any
-        // discovery changes.
-        tokio::spawn(async move {
-            let dconfig = config.discovery.unwrap_or_default();
-            let discovery_cache = discovery::Cache::new();
-            let mut discovery_stream =
-                discovery::reflector(discovery_cache.clone(), discovery::as_stream(&dconfig));
-            loop {
-                info!("loading configuration and updating backends");
-                backend_reloads.inc();
-                let config = load_backend_configs(&discovery_cache, &backends, opts.config.as_ref()).await.unwrap();
-                let dconfig = config.discovery.unwrap_or_default();
-
-                tokio::select! {
-                    _ = sighup.recv() => {
-                        info!("received sighup");
-                        discovery_stream = discovery::reflector(discovery_cache.clone(), discovery::as_stream(&dconfig));
-                        info!("reloaded discovery stream");
-                    }
-                    Some(event) = discovery_stream.next() => {
-                        info!("updating discovery for map {}", event.0);
-                    }
-                };
-            }
-        });
-
-        run.await;
+        server(scope, config, opts).await;
     });
 
     drop(runtime);

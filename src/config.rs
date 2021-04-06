@@ -28,7 +28,7 @@ pub struct Processors {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct StatsdDuplicateTo {
+pub struct StatsdBackendConfig {
     #[serde(default)]
     pub shard_map: Vec<String>,
     pub shard_map_source: Option<String>,
@@ -40,19 +40,22 @@ pub struct StatsdDuplicateTo {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct StatsdConfig {
+pub struct StatsdServerConfig {
     pub bind: String,
-    pub point_tag_regex: Option<String>,
-    pub validate: Option<bool>,
-    pub tcp_cork: Option<bool>,
-    pub backends: HashMap<String, StatsdDuplicateTo>,
+    pub socket: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct StatsdConfig {
+    pub servers: HashMap<String, StatsdServerConfig>,
+    pub backends: HashMap<String, StatsdBackendConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DiscoveryTransform {
-    Format{ pattern: String },
-    Repeat{ count: u32 },
+    Format { pattern: String },
+    Repeat { count: u32 },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -142,7 +145,10 @@ pub mod test {
         let config = r#"
         {
             "statsd": {
-                "bind": "127.0.0.1:BIND_STATSD_PORT",
+                "servers": {
+                    "default":
+                    { "bind": "127.0.0.1:BIND_STATSD_PORT" }
+                },
                 "backends": {
                     "test1":
                        {
@@ -158,10 +164,7 @@ pub mod test {
                             "prefix": "test-2.",
                             "shard_map_source": "my_s3"
                         }
-                },
-                "point_tag_regex": "\\.__([a-zA-Z][a-zA-Z0-9_]+)=[a-zA-Z0-9_/-]+",
-                "tcp_cork": true,
-                "validate": true
+                }
             },
             "discovery": {
                 "sources": {
@@ -193,8 +196,12 @@ pub mod test {
         let mut tf = NamedTempFile::new().unwrap();
         tf.write_all(config.as_bytes()).unwrap();
         let config = load(tf.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.statsd.validate, Some(true));
-
+        // Check servers
+        let default_server = config.statsd.servers.get("default").unwrap();
+        assert_eq!(
+            default_server.bind,
+            "127.0.0.1:BIND_STATSD_PORT".to_string()
+        );
         // Check discovery
         let discovery = config.discovery.unwrap();
         assert_eq!(2, discovery.sources.len());

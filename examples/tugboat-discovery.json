@@ -1,9 +1,11 @@
 {
     "statsd": {
-        "bind": "127.0.0.1:8129",
-        "point_tag_regex": "\\.__([a-zA-Z][a-zA-Z0-9_]+)=[a-zA-Z0-9_/-]+",
-        "tcp_cork": true,
-        "validate": true,
+        "servers": {
+            "default": {
+                "bind": "127.0.0.1:8129",
+                "socket": "/tmp/statsrelay"
+            }
+        },
         "backends": {
             "simple": {
                 "shard_map": [

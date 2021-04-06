@@ -7,7 +7,7 @@ use regex::bytes::RegexSet;
 use statsdproto::statsd::StatsdPDU;
 use thiserror::Error;
 
-use crate::config::StatsdDuplicateTo;
+use crate::config;
 use crate::discovery;
 use crate::shard::{statsrelay_compat_hash, Ring};
 use crate::stats;
@@ -16,7 +16,7 @@ use crate::statsd_client::StatsdClient;
 use log::warn;
 
 struct StatsdBackend {
-    conf: StatsdDuplicateTo,
+    conf: config::StatsdBackendConfig,
     ring: Ring<StatsdClient>,
     input_filter: Option<RegexSet>,
     warning_log: AtomicU64,
@@ -27,7 +27,7 @@ struct StatsdBackend {
 impl StatsdBackend {
     fn new(
         stats: stats::Scope,
-        conf: &StatsdDuplicateTo,
+        conf: &config::StatsdBackendConfig,
         client_ref: Option<&StatsdBackend>,
         discovery_update: Option<&discovery::Update>,
     ) -> anyhow::Result<Self> {
@@ -173,7 +173,7 @@ impl BackendsInner {
     fn replace_statsd_backend(
         &mut self,
         name: &String,
-        c: &StatsdDuplicateTo,
+        c: &config::StatsdBackendConfig,
         discovery_update: Option<&discovery::Update>,
     ) -> anyhow::Result<()> {
         let previous = self.statsd.get(name);
@@ -228,7 +228,7 @@ impl Backends {
     pub fn replace_statsd_backend(
         &self,
         name: &String,
-        c: &StatsdDuplicateTo,
+        c: &config::StatsdBackendConfig,
         discovery_update: Option<&discovery::Update>,
     ) -> anyhow::Result<()> {
         self.inner
