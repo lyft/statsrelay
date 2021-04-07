@@ -147,9 +147,7 @@ fn main() -> anyhow::Result<()> {
 
     let scope = collector.scope("statsrelay");
 
-    runtime.block_on(async move {
-        server(scope, config, opts).await;
-    });
+    runtime.block_on(server(scope, config, opts));
 
     drop(runtime);
     info!("runtime terminated");

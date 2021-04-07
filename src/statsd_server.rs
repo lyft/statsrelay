@@ -113,13 +113,15 @@ fn process_buffer_newlines(buf: &mut BytesMut) -> Vec<StatsdPDU> {
     return ret;
 }
 
-async fn client_handler<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
+async fn client_handler<T>(
     stats: stats::Scope,
     peer: String,
     mut tripwire: Tripwire,
     mut socket: T,
     backends: Backends,
-) {
+) where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
     let mut buf = BytesMut::with_capacity(READ_BUFFER);
     let incoming_bytes = stats.counter("incoming_bytes").unwrap();
     let disconnects = stats.counter("disconnects").unwrap();
@@ -202,10 +204,10 @@ async fn client_handler<T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'stati
 async fn optional_accept(
     listener: Option<&UnixListener>,
 ) -> std::io::Result<(UnixStream, unix::SocketAddr)> {
-    if listener.is_some() {
-        listener.unwrap().accept().await
+    if let Some(listener) = listener {
+        listener.accept().await
     } else {
-        futures::future::pending::<std::io::Result<(UnixStream, unix::SocketAddr)>>().await
+        futures::future::pending().await
     }
 }
 
